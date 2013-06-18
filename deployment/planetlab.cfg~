@@ -1,0 +1,26 @@
+BLACKADDER_ID_LENGTH = 8;
+LIPSIN_ID_LENGTH = 32;
+CLICK_HOME = "/home/mit_psirp/";
+USER = "mit_psirp";
+SUDO = true;
+OVERLAY_MODE = "ip";
+
+network = {    
+    nodes = (
+    {
+        testbed_ip = "149.43.80.22";
+    },
+    {
+        testbed_ip = "198.82.160.220";
+    },
+    {
+        testbed_ip = "192.1.249.138";
+    },
+    {
+        testbed_ip = "137.148.16.10";
+    },
+    {
+        testbed_ip = "129.107.35.131";
+    }
+  );
+};

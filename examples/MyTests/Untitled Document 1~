@@ -1,0 +1,4 @@
+all:
+	$(CXX) $(CXXFLAGS) map_test.cpp -o map_test
+clean:
+	rm -f map_test

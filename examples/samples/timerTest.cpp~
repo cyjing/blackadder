@@ -1,0 +1,11 @@
+/*
+*/
+#include <studio.h>
+#include <time.h>
+
+int main(int argc, char* argv[]) {
+    time_t rawtime;
+    time (rawtime);
+    printf ("can i print?");
+}
+

@@ -1,0 +1,111 @@
+BLACKADDER_ID_LENGTH = 8;
+LIPSIN_ID_LENGTH = 32;
+CLICK_HOME = "/home/mit_psirp/";
+WRITE_CONF = "";
+USER = "mit_psirp";
+SUDO = true;
+OVERLAY_MODE = "ip";
+
+
+network = {
+    nodes = (
+     {
+       testbed_ip = "149.43.80.22";
+       running_mode = "user";
+       label = "00000001";
+       role = ["RV","TM"];
+       connections = (
+           {
+               to = "00000002";
+               src_ip = "149.43.80.22";
+               dst_ip = "198.82.160.220";
+           },
+           {
+               to = "00000003";
+               src_ip = "149.43.80.22";
+               dst_ip = "129.107.35.131";
+           },
+           {
+               to = "00000004";
+               src_ip = "149.43.80.22";
+               dst_ip = "165.230.49.118";
+           },
+           {
+               to = "00000005";
+               src_ip = "149.43.80.22";
+               dst_ip = "66.140.111.7";
+           }
+        );
+     },
+     {
+       testbed_ip = "198.82.160.220";
+       running_mode = "user";
+       label = "00000002";
+       role = ["RV"];
+       connections = (
+           {
+               to = "00000001";
+               src_ip = "198.82.160.220";
+               dst_ip = "149.43.80.22";
+           },
+           {
+               to = "00000004";
+               src_ip = "198.82.160.220";
+               dst_ip = "165.230.49.118";
+           },
+        );
+     },
+     {
+       testbed_ip = "129.107.35.131";
+       running_mode = "user";
+       label = "00000003";
+       role = ["RV"];
+       connections = (
+           {
+               to = "00000001";
+               src_ip = "129.107.35.131";
+               dst_ip = "149.43.80.22";
+           },
+           {
+               to = "00000005";
+               src_ip = "129.107.35.131";
+               dst_ip = "66.140.111.7";
+           }
+        );
+     },
+     {
+       testbed_ip = "165.230.49.118";
+       running_mode = "user";
+       label = "00000004";
+       connections = (
+           {
+               to = "00000001";
+               src_ip = "165.230.49.118";
+               dst_ip = "149.43.80.22";
+           },
+           {
+               to = "00000002";
+               src_ip = "165.230.49.118";
+               dst_ip = "198.82.160.220";
+           },
+        );
+     },
+     {
+       testbed_ip = "66.140.111.7";
+       running_mode = "user";
+       label = "00000005";
+       connections = (
+           {
+               to = "00000001";
+               src_ip = "66.140.111.7";
+               dst_ip = "149.43.80.22";
+           },
+	   {
+               to = "00000003";
+               src_ip = "66.140.111.7";
+               dst_ip = "129.107.35.131";
+           }
+        );
+     }
+    );
+};

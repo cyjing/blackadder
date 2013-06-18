@@ -1,0 +1,877 @@
+/*
+ * Copyright (C) 2010-2011  George Parisis and Dirk Trossen
+ * All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 as published by the Free Software Foundation.
+ *
+ * Alternatively, this software may be distributed under the terms of
+ * the BSD license.
+ *
+ * See LICENSE and COPYING for more details.
+ */
+
+#include "tm_igraph.hpp"
+
+bool exists(vector<Bitvector> &LIDs, Bitvector &LID) {
+    for (int i = 0; i < LIDs.size(); i++) {
+        if (LIDs[i] == LID) {
+            //cout << "duplicate LID" << endl;
+            return true;
+        }
+    }
+    return false;
+}
+TMIgraph::TMIgraph() {
+    igraph_i_set_attribute_table(&igraph_cattribute_table);
+    igraph_empty(&graph, 0, true);
+    srand(time(0));
+}
+
+TMIgraph::~TMIgraph() {
+    map<string, Bitvector *>::iterator nodeID_iLID_iter;
+    map<int, Bitvector *>::iterator edge_LID_iter;
+    for (nodeID_iLID_iter = nodeID_iLID.begin(); nodeID_iLID_iter != nodeID_iLID.end(); nodeID_iLID_iter++) {
+        delete (*nodeID_iLID_iter).second;
+    }
+    for (edge_LID_iter = edge_LID.begin(); edge_LID_iter != edge_LID.end(); edge_LID_iter++) {
+        delete (*edge_LID_iter).second;
+    }
+    igraph_i_attribute_destroy(&graph);
+    igraph_destroy(&graph);
+}
+
+int TMIgraph::readTopology(char *file_name) {
+    int ret;
+    Bitvector *lid;
+    Bitvector *ilid;
+    ifstream infile;
+    string str;
+    size_t found, first, second;
+    FILE *instream;
+    infile.open(file_name, ifstream::in);
+    /*first the Global graph attributes - c igraph does not do it!!*/
+    while (infile.good()) {
+        getline(infile, str);
+        found = str.find("<data key=\"FID_LEN\">");
+        if (found != string::npos) {
+            first = str.find(">");
+            second = str.find("<", first);
+            sscanf(str.substr(first + 1, second - first - 1).c_str(), "%d", &fid_len);
+        }
+        found = str.find("<data key=\"TM\">");
+        if (found != string::npos) {
+            first = str.find(">");
+            second = str.find("<", first);
+            nodeID = str.substr(first + 1, second - first - 1);
+        }
+
+        found = str.find("<data key=\"TM_MODE\">");
+        if (found != string::npos) {
+            first = str.find(">");
+            second = str.find("<", first);
+            mode = str.substr(first + 1, second - first - 1);
+        }
+    }
+    infile.close();
+    instream = fopen(file_name, "r");
+    ret = igraph_read_graph_graphml(&graph, instream, 0);
+    fclose(instream);
+    if (ret < 0) {
+        return ret;
+    }
+    cout << "TM: " << igraph_vcount(&graph) << " nodes" << endl;
+    cout << "TM: " << igraph_ecount(&graph) << " edges" << endl;
+    for (int i = 0; i < igraph_vcount(&graph); i++) {
+        string nID = string(igraph_cattribute_VAS(&graph, "NODEID", i));
+        string iLID = string(igraph_cattribute_VAS(&graph, "iLID", i));
+		string ipAddress = string(igraph_cattribute_VAS(&graph, "IPAddress", i));
+		node_index.insert(pair<int, string>(i,nID));
+		nodeID_IP.insert(pair<string, string>(nID, ipAddress));
+        reverse_node_index.insert(pair<string, int>(nID, i));
+        ilid = new Bitvector(iLID);
+        nodeID_iLID.insert(pair<string, Bitvector *>(nID, ilid));
+        vertex_iLID.insert(pair<int, Bitvector *>(i, ilid));
+        //cout << "node " << i << " has NODEID " << nID << endl;
+        //cout << "node " << i << " has ILID " << ilid->to_string() << endl;
+    }
+
+    for (int i = 0; i < igraph_ecount(&graph); i++) {
+        string LID = string(igraph_cattribute_EAS(&graph, "LID", i));
+        reverse_edge_index.insert(pair<string, int>(LID, i));
+        lid = new Bitvector(LID);
+        edge_LID.insert(pair<int, Bitvector *>(i, lid));
+        //cout << "edge " << i << " has LID  " << lid->to_string() << endl;
+    }
+    
+    cout<<igraph_ecount(&graph)<<endl;
+    return ret;
+}
+
+
+int TMIgraph::readRVTopology(char *file_name) {
+    int ret;
+    Bitvector *lid;
+    Bitvector *ilid;
+    ifstream infile;
+    string str;
+    size_t found, first, second;
+    FILE *instream;
+    infile.open(file_name, ifstream::in);
+    /*first the Global graph attributes - c igraph does not do it!!*/
+
+    while (infile.good()) {
+        getline(infile, str);
+		found = str.find("<data key=\"FID_LEN\">");
+        if (found != string::npos) {
+            first = str.find(">");
+            second = str.find("<", first);
+            sscanf(str.substr(first + 1, second - first - 1).c_str(), "%d", &fid_len);
+        }
+        found = str.find("<data key=\"MASTER_RV\">");
+        if (found != string::npos) {
+            first = str.find(">");
+            second = str.find("<", first);
+            string masterRVnodeID = str.substr(first + 1, second - first - 1);
+	    	string left, right;
+		    master = new RV_leaf(masterRVnodeID, left, right);
+		    RVNodeMap[masterRVnodeID] = master;
+        }
+    }
+
+    infile.close();
+    instream = fopen(file_name, "r");
+    ret = igraph_read_graph_graphml(&graphRV, instream, 0);
+    fclose(instream);
+    if (ret < 0) {
+        return ret;
+    }
+	
+
+    for (int i = 0; i < igraph_vcount(&graphRV); i++) {
+        string nID = string(igraph_cattribute_VAS(&graphRV, "NODEID", i));
+        string iLID = string(igraph_cattribute_VAS(&graphRV, "iLID", i));		
+        string nodes = string(igraph_cattribute_VAS(&graphRV, "netWork Node", i));
+		vector<string> nodeList;
+		split(nodes, nodeList);
+		nodeLists[nID] = nodeList;
+		cout<<"nodied id  " << nID.c_str()<<endl;
+		rv_node_index.insert(pair<int, string>(i, nID));
+        rv_reverse_node_index.insert(pair<string, int>(nID, i));
+    }
+
+    //create RV node map
+    for (int i = 0; i < igraph_vcount(&graphRV); i++) {
+        igraph_vs_t vertexOut;
+		igraph_vs_adj(&vertexOut, i, IGRAPH_OUT);
+	
+		igraph_vit_t vit;
+		igraph_vit_create(&graphRV, vertexOut, &vit);	
+		igraph_integer_t j;
+    	igraph_vs_size(&graphRV, &vertexOut, &j);	
+		
+		string nodeID = rv_node_index[i];
+	
+		while (!IGRAPH_VIT_END(vit)) {
+			long int e1 = IGRAPH_VIT_GET(vit);
+			string e1NodeID = rv_node_index[e1];
+			cout<<nodeID + "   " + e1NodeID<<endl;
+	  		addRVNode(nodeID, e1NodeID);
+	  		IGRAPH_VIT_NEXT(vit);
+		}
+    }
+    return ret;
+}
+
+Bitvector *TMIgraph::calculateFID(string &source, string &destination) {
+    int vertex_id;
+    Bitvector *result = new Bitvector(FID_LEN * 8);
+    igraph_vs_t vs;
+    igraph_vector_ptr_t res;
+    igraph_vector_t to_vector;
+    igraph_vector_t *temp_v;
+    igraph_integer_t eid;
+
+    /*find the vertex id in the reverse index*/
+    int from = (*reverse_node_index.find(source)).second;
+    igraph_vector_init(&to_vector, 1);
+    VECTOR(to_vector)[0] = (*reverse_node_index.find(destination)).second;    
+	/*initialize the sequence*/
+    igraph_vs_vector(&vs, &to_vector);
+    /*initialize the vector that contains pointers*/
+    igraph_vector_ptr_init(&res, 1);
+    temp_v = (igraph_vector_t *) VECTOR(res)[0];
+    temp_v = (igraph_vector_t *) malloc(sizeof (igraph_vector_t));
+    VECTOR(res)[0] = temp_v;
+    igraph_vector_init(temp_v, 1);
+
+    /*run the shortest path algorithm from "from"*/
+    igraph_get_shortest_paths(&graph, &res, from, vs, IGRAPH_OUT);
+    /*check the shortest path to each destination*/
+    temp_v = (igraph_vector_t *) VECTOR(res)[0];
+    //click_chatter("Shortest path from %s to %s", igraph_cattribute_VAS(&graph, "NODEID", from), igraph_cattribute_VAS(&graph, "NODEID", VECTOR(*temp_v)[igraph_vector_size(temp_v) - 1]));
+    /*now let's "or" the FIDs for each link in the shortest path*/
+
+
+    for (int j = 0; j < igraph_vector_size(temp_v) - 1; j++) {
+        igraph_get_eid(&graph, &eid, VECTOR(*temp_v)[j], VECTOR(*temp_v)[j + 1], true);
+        //click_chatter("node %s -> node %s", igraph_cattribute_VAS(&graph, "NODEID", VECTOR(*temp_v)[j]), igraph_cattribute_VAS(&graph, "NODEID", VECTOR(*temp_v)[j + 1]));
+        //click_chatter("link: %s", igraph_cattribute_EAS(&graph, "LID", eid));
+        string LID(igraph_cattribute_EAS(&graph, "LID", eid), FID_LEN * 8);
+        for (int k = 0; k < FID_LEN * 8; k++) {
+            if (LID[k] == '1') {
+                (*result)[ FID_LEN * 8 - k - 1].operator |=(true);
+            }
+        }
+        //click_chatter("FID of the shortest path: %s", result.to_string().c_str());
+    }
+    /*now for all destinations "or" the internal linkID*/
+    vertex_id = (*reverse_node_index.find(destination)).second;
+    string iLID(igraph_cattribute_VAS(&graph, "iLID", vertex_id));
+    //click_chatter("internal link for node %s: %s", igraph_cattribute_VAS(&graph, "NODEID", vertex_id), iLID.c_str());
+    for (int k = 0; k < FID_LEN * 8; k++) {
+        if (iLID[k] == '1') {
+            (*result)[ FID_LEN * 8 - k - 1].operator |=(true);
+        }
+    }
+    igraph_vector_destroy((igraph_vector_t *) VECTOR(res)[0]);
+    igraph_vector_destroy(&to_vector);
+    igraph_vector_ptr_destroy_all(&res);
+    igraph_vs_destroy(&vs);
+    return result;
+}
+
+/*main function for rendezvous*/
+void TMIgraph::calculateFID(set<string> &publishers, set<string> &subscribers, map<string, Bitvector *> &result) {
+    set<string>::iterator subscribers_it;
+    set<string>::iterator publishers_it;
+    string bestPublisher;
+    Bitvector resultFID(FID_LEN * 8);
+    Bitvector bestFID(FID_LEN * 8);
+    unsigned int numberOfHops = 0;
+    /*first add all publishers to the hashtable with NULL FID*/
+    for (publishers_it = publishers.begin(); publishers_it != publishers.end(); publishers_it++) {
+        string publ = *publishers_it;
+        result.insert(pair<string, Bitvector *>(publ, NULL));
+    }
+    for (subscribers_it = subscribers.begin(); subscribers_it != subscribers.end(); subscribers_it++) {
+        /*for all subscribers calculate the number of hops from all publishers (not very optimized...don't you think?)*/
+        unsigned int minimumNumberOfHops = UINT_MAX;
+        for (publishers_it = publishers.begin(); publishers_it != publishers.end(); publishers_it++) {
+            resultFID.clear();
+            string str1 = (*publishers_it);
+            string str2 = (*subscribers_it);
+            calculateFID(str1, str2, resultFID, numberOfHops);
+            if (minimumNumberOfHops > numberOfHops) {
+                minimumNumberOfHops = numberOfHops;
+                bestPublisher = *publishers_it;
+                bestFID = resultFID;
+            }
+        }
+        //cout << "best publisher " << bestPublisher << " for subscriber " << (*subscribers_it) << " -- number of hops " << minimumNumberOfHops - 1 << endl;
+        if ((*result.find(bestPublisher)).second == NULL) {
+            /*add the publisher to the result*/
+            //cout << "FID1: " << bestFID.to_string() << endl;
+            result[bestPublisher] = new Bitvector(bestFID);
+        } else {
+            //cout << "/*update the FID for the publisher*/" << endl;
+            Bitvector *existingFID = (*result.find(bestPublisher)).second;
+            /*or the result FID*/
+            *existingFID = *existingFID | bestFID;
+        }
+    }
+}
+
+void TMIgraph::calculateFID(string &source, string &destination, Bitvector &resultFID, unsigned int &numberOfHops) {
+    int vertex_id;
+    igraph_vs_t vs;
+    igraph_vector_ptr_t res;
+    igraph_vector_t to_vector;
+    igraph_vector_t *temp_v;
+    igraph_integer_t eid;
+
+    /*find the vertex id in the reverse index*/
+    int from = (*reverse_node_index.find(source)).second;
+    igraph_vector_init(&to_vector, 1);
+    VECTOR(to_vector)[0] = (*reverse_node_index.find(destination)).second;
+    /*initialize the sequence*/
+    igraph_vs_vector(&vs, &to_vector);
+    /*initialize the vector that contains pointers*/
+    igraph_vector_ptr_init(&res, 1);
+    temp_v = (igraph_vector_t *) VECTOR(res)[0];
+    temp_v = (igraph_vector_t *) malloc(sizeof (igraph_vector_t));
+    VECTOR(res)[0] = temp_v;
+    igraph_vector_init(temp_v, 1);
+    /*run the shortest path algorithm from "from"*/
+    igraph_get_shortest_paths(&graph, &res, from, vs, IGRAPH_OUT);
+    /*check the shortest path to each destination*/
+    temp_v = (igraph_vector_t *) VECTOR(res)[0];
+
+    /*now let's "or" the FIDs for each link in the shortest path*/
+    for (int j = 0; j < igraph_vector_size(temp_v) - 1; j++) {
+        igraph_get_eid(&graph, &eid, VECTOR(*temp_v)[j], VECTOR(*temp_v)[j + 1], true);
+        Bitvector *lid = new Bitvector(FID_LEN * 8);
+		string LID(igraph_cattribute_EAS(&graph, "LID", eid), FID_LEN * 8);
+        for (int k = 0; k < FID_LEN * 8; k++) {
+            if (LID[k] == '1') {
+                (*lid)[ FID_LEN * 8 - k - 1].operator |=(true);
+            }
+        }
+        (resultFID) = (resultFID) | (*lid);
+    }
+    numberOfHops = igraph_vector_size(temp_v);
+
+    /*now for the destination "or" the internal linkID*/
+    Bitvector *ilid = (*nodeID_iLID.find(destination)).second;
+    (resultFID) = (resultFID) | (*ilid);
+    //cout << "FID of the shortest path: " << resultFID.to_string() << endl;
+    igraph_vector_destroy((igraph_vector_t *) VECTOR(res)[0]);
+    igraph_vector_destroy(&to_vector);
+    igraph_vector_ptr_destroy_all(&res);
+    igraph_vs_destroy(&vs);
+}
+
+void TMIgraph::failedNodeReconfig(string & node){
+    cout<<"entering failed reconfig phase"<<endl;
+
+    if (reverse_node_index.find(node) == reverse_node_index.end()){
+      //this node isn't even part of the topology
+      //error, or this is a repeat message from another part of the graph
+        cout<<"couldn't find node"<<endl;
+    }else{
+        igraph_vs_t vertexOut;
+		int i = reverse_node_index[node];
+		igraph_vs_adj(&vertexOut, i, IGRAPH_OUT);
+		igraph_integer_t j;
+		igraph_vs_size(&graph, &vertexOut, &j);
+		if (j<=1){
+  	    	cout<<"it is a leaf node"<<endl;
+	   		//igraph_es_t edges;
+	    	//igraph_es_adj(&edges, i, IGRAPH_ALL);
+	    	//igraph_delete_edges(&graph, edges);
+	    	//message about how one of the neighbors got deleted?? Otherwise no action is needed. Edge is kept for now because I need to figure out how to delete an edge without shifting all the edges IDs in the igraph
+		}else{
+	    	//get all the graph ids of nodes connected to failed node
+	   		igraph_vit_t vit;
+            igraph_vit_create(&graph, vertexOut, &vit);
+            vector<long int> vertexID;
+	    	int size_response = 0;
+
+	    	string failedIP = nodeID_IP[node];
+	    	unsigned char failedIPLen = failedIP.length();
+
+	    	vector< pair<string, string> > oldIP_LID;
+
+            while(!IGRAPH_VIT_END(vit)){
+        		vertexID.push_back(IGRAPH_VIT_GET(vit));
+	      		IGRAPH_VIT_NEXT(vit);
+	      		igraph_integer_t eid;
+	      		igraph_get_eid(&graph, &eid, i, IGRAPH_VIT_GET(vit), true);
+	      		string LID1 = string(igraph_cattribute_EAS(&graph, "LID", eid));
+	      		string nID = string(igraph_cattribute_VAS(&graph, "NODEID", IGRAPH_VIT_GET(vit)));
+	      		string IP = nodeID_IP[nID];
+	      		oldIP_LID.push_back(make_pair(LID1, IP));
+	      		size_response+= LID1.length() + sizeof(unsigned char) + IP.length() + sizeof(unsigned char);
+            }
+
+		    int vertex_id;
+		    igraph_vs_t vs;
+		    igraph_vector_ptr_t res;
+		    igraph_vector_t to_vector;
+		    igraph_vector_t *temp_v;
+		    igraph_integer_t eid;
+
+			//find the best new star node that is connected to the failed node
+            long int from = (*reverse_node_index.find(node)).second;
+            igraph_vector_init(&to_vector, 1);
+            VECTOR(to_vector)[0] = (*reverse_node_index.find(nodeID)).second;
+            igraph_vs_vector(&vs, &to_vector);
+            igraph_vector_ptr_init(&res, 1);
+            temp_v = (igraph_vector_t *) VECTOR(res)[0];
+            temp_v = (igraph_vector_t *) malloc(sizeof (igraph_vector_t));
+            VECTOR(res)[0] = temp_v;
+            igraph_vector_init(temp_v, 1);
+            igraph_get_shortest_paths(&graph, &res, from, vs, IGRAPH_OUT);
+            temp_v = (igraph_vector_t *) VECTOR(res)[0];
+
+	  	  //iterate through all connected vertex
+   		    long int vertexNext =  VECTOR(*temp_v)[1];
+ 
+		    //iterate through all connected edges
+		    //TODO figure out how to delete the edges while keeping track of the edge ids
+		    igraph_es_t edges;
+		    igraph_es_adj(&edges, i, IGRAPH_ALL);
+		    igraph_eit_t eit;
+		    igraph_eit_create(&graph, edges, &eit);
+	
+		    string oldLID;
+		    unsigned char oldLIDLength;
+
+			igraph_delete_edges(&graph, edges);
+
+    	    long int newStar = vertexNext;
+		    int response_size = 0;
+    	    unsigned char numIPaddresses = 0;
+		    // (node,(IP, LID))
+    	    vector<pair<string, pair<string, string> > > IPs;
+   
+ 	        /*response
+                this all goes to the localProxy and it knows that it was from just a network publication
+                1) code, ie define #NEWCONNECTIONS
+                2) number of IP addresses
+                3) length of nodeID
+                4) nodeID
+                5) length of IP
+                6) IP
+                7) repeat for each IP that needs to be sent over
+            */
+	    
+		    //assign new LIDs for the new edges added
+		    //TODO make sure new LIDs aren't the same as ones in click config file
+		    int LIDcounter =0;
+		    int totalLIDs =  (vertexID.size()-1)*2;
+		    vector<Bitvector> LIDs(totalLIDs);
+		    for (int j= 0 ; j< totalLIDs; j++){
+		        calculateLID(LIDs, j);
+		    }
+
+		    unsigned char response_type = NEWCONNECTIONS_NODE;
+		    unsigned char numOfResponse = 1;
+		    unsigned char lenOfNodeID, IPlen, LIDlen;
+		    string IP, LID;
+
+		    Bitvector *lid;
+    	    for (int j= 0 ; j< vertexID.size(); j++){
+    	        long int newConnection = vertexID.at(j);
+    	        if (newConnection != vertexNext){
+    	            igraph_add_edge(&graph, newConnection, vertexNext);
+    	            igraph_add_edge(&graph, vertexNext, newConnection);
+	
+    	            string newNodeID = node_index[newConnection];
+				    IP = nodeID_IP[nodeID];
+				    IPlen = IP.length();
+				    LID = LIDs.at(LIDcounter).to_string();
+				    lid = new Bitvector(LID);
+				    //TODO get rid of magic number, LIDlen in chuncks of fid_len total LIDlen = 8*fid_len
+				    int temp = LID.length()/fid_len;
+				    LIDlen = temp;
+				    string LIDtoStar = LIDs.at(LIDcounter+1).to_string();
+				    
+				    igraph_integer_t eid;
+				    igraph_get_eid(&graph, &eid, newConnection, vertexNext, true);
+				    //reverse_edge_index.insert(pair<string, int>(LID, eid));
+				    //edge_LID.insert(pair<int, Bitvector *>(eid, lid));
+				    igraph_cattribute_EAS_set(&graph, "LID", eid, LID.c_str());
+		
+				    lid = new Bitvector(LIDtoStar);
+				    igraph_get_eid(&graph, &eid, vertexNext, newConnection, true); 
+				    igraph_cattribute_EAS_set(&graph, "LID", eid, LIDtoStar.c_str());
+		
+				    lenOfNodeID = newNodeID.length();
+				    int lenOfArray = sizeof(response_type) + sizeof(numOfResponse) + sizeof(failedIPLen) + failedIPLen + sizeof(IPlen) + IPlen + sizeof(LIDlen) + LID.length();
+ 	            	char *responseSmall = (char *) malloc(lenOfArray);
+	
+ 	               	memcpy(responseSmall, &response_type, sizeof (response_type));
+ 	               	memcpy(responseSmall + sizeof (response_type), &numOfResponse, sizeof (numOfResponse));
+				   	memcpy(responseSmall + sizeof (response_type) + sizeof (numOfResponse), &failedIPLen , sizeof(failedIPLen));
+					memcpy(responseSmall + sizeof (response_type) + sizeof (numOfResponse) + sizeof(failedIPLen), failedIP.c_str(), failedIP.length());
+			    	memcpy(responseSmall + sizeof (response_type) + sizeof (numOfResponse) + sizeof(failedIPLen) + failedIPLen, &IPlen, sizeof(IPlen));
+				    memcpy(responseSmall + sizeof (response_type) + sizeof (numOfResponse) + sizeof(failedIPLen) + failedIPLen + sizeof(IPlen), IP.c_str(), IPlen);
+				    memcpy(responseSmall + sizeof (response_type) + sizeof (numOfResponse) + sizeof(failedIPLen) + failedIPLen + sizeof(IPlen) + IPlen, &LIDlen, sizeof(LIDlen));
+				    memcpy(responseSmall + sizeof (response_type) + sizeof (numOfResponse) + sizeof(failedIPLen) + failedIPLen + sizeof(IPlen) + IPlen + sizeof(LIDlen), LID.c_str(), LID.length());
+				    numIPaddresses ++;
+    	            response_size +=   sizeof(IPlen) + IPlen + sizeof(LIDlen) + LID.length();
+    	            whatImReturning.push_back(make_pair(make_pair(newNodeID, lenOfArray), responseSmall));
+    	            IPs.push_back(make_pair(newNodeID, make_pair(nodeID_IP[newNodeID], LIDtoStar)));
+				    LIDcounter+=2;
+   	            }
+            }
+
+
+		    //update RV configuration
+		    if (RVNodeMap.find(node) != RVNodeMap.end()){
+		    	string a = failedRVReconfig(node);
+		    }			
+
+			cout<<"aaaa"<<endl;
+
+	    	response_type = NEWCONNECTIONS_NODE;
+	    	response_size += sizeof(response_type) + sizeof(numIPaddresses)+ sizeof(failedIPLen) + failedIPLen;
+            char *response = (char *) malloc(response_size);           
+	    	string newStarNodeID = node_index[vertexNext];
+
+	    	lenOfNodeID = nodeID.length();
+            memcpy(response, &response_type, sizeof (response_type));
+            memcpy(response + sizeof (response_type), &numIPaddresses, sizeof (numIPaddresses));
+	    	memcpy(response + sizeof (response_type) + sizeof (numIPaddresses), &failedIPLen, sizeof(failedIPLen));
+	    	memcpy(response + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen), failedIP.c_str(), failedIPLen);
+
+	    	int index = 0;
+            for (int k = 0; k < IPs.size(); k++){
+                string newNodeID = IPs.at(k).first;
+				unsigned char newNodeLen = newNodeID.length();
+               	string IP = IPs.at(k).second.first;
+				unsigned char IPlen = IP.length();
+				string LID = IPs.at(k).second.second;
+				//TODO get rid of magic number, LIDlen in chuncks of fid_len total LIDlen = 8*fid_len
+				int temp = (LID.length()/fid_len);
+				unsigned char LIDlen = temp;
+                memcpy(response + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen) + failedIPLen + index , &IPlen, sizeof(IPlen));
+                memcpy(response + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen) + failedIPLen + index + sizeof(IPlen), IP.c_str(), IPlen);
+				memcpy(response + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen) + failedIPLen + index + sizeof(IPlen) + IPlen, &LIDlen, sizeof(LIDlen));
+				memcpy(response + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen) + failedIPLen + index + sizeof(IPlen) + IPlen + sizeof(LIDlen), LID.c_str(), LID.length());
+				index+=  sizeof(IPlen) + IPlen + sizeof(LIDlen) + LID.length();
+            }
+            whatImReturning.push_back(make_pair(make_pair(newStarNodeID, response_size), response));
+
+	    	response_type = NEWCONNECTIONS_STAR;
+	   		size_response += sizeof(response_type) + sizeof(numIPaddresses)+ sizeof(failedIPLen) + failedIPLen;
+
+            char *response1 = (char *) malloc(size_response);         
+	    	memcpy(response1, &response_type, sizeof (response_type));
+            memcpy(response1 + sizeof (response_type), &numIPaddresses, sizeof (numIPaddresses));
+	    	memcpy(response1 + sizeof (response_type) + sizeof (numIPaddresses), &failedIPLen, sizeof(failedIPLen));
+	    	memcpy(response1 + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen), failedIP.c_str(), failedIPLen);
+
+	    	int indexA = 0;
+	    	for (int j = 0; j < oldIP_LID.size(); j++){
+	        	string IP = oldIP_LID.at(i).first;
+				unsigned char IPlen = IP.length();
+				string LID = oldIP_LID.at(i).second;
+				int temp = (LID.length()/fid_len);
+				unsigned char LIDlen = temp;
+				memcpy(response1 + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen) + failedIPLen + index , &IPlen, sizeof(IPlen));
+                memcpy(response1 + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen) + failedIPLen + index + sizeof(IPlen), IP.c_str(), IPlen);
+				memcpy(response1 + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen) + failedIPLen + index + sizeof(IPlen) + IPlen, &LIDlen, sizeof(LIDlen));
+				memcpy(response1 + sizeof (response_type) + sizeof (numIPaddresses) + sizeof(failedIPLen) + failedIPLen + index + sizeof(IPlen) + IPlen + sizeof(LIDlen), LID.c_str(), LID.length());
+				index+=  sizeof(IPlen) + IPlen + sizeof(LIDlen) + LID.length();
+		    }
+		    whatImReturning.push_back(make_pair(make_pair(node_index[vertexNext], size_response), response1));
+        }
+    }
+}
+
+
+void TMIgraph::addRVNode(string &ID, string &child){
+    string left, right;
+    RV_leaf * newNode;
+
+    if (RVNodeMap.find(ID) == RVNodeMap.end()){
+        newNode = new RV_leaf(ID, left, right);
+    }else{
+        newNode = RVNodeMap[ID];
+    }
+
+    if (!child.empty()){
+        if (RVNodeMap.find(child) == RVNodeMap.end()){
+	    RV_leaf * childRVNode = new RV_leaf(child, left, right);
+	    childRVNode->parent_ID = newNode->self_ID;
+	    RVNodeMap[child] = childRVNode;			
+	    newNode->addNode(childRVNode, child);
+	}else{
+	    RV_leaf * childRVNode = RVNodeMap[child];
+	    childRVNode->parent_ID = newNode->self_ID;		
+	    newNode->addNode(childRVNode, child);
+	}
+    }
+	
+    RVNodeMap[ID] = newNode;
+}
+
+void TMIgraph::split(string &str, vector<string> &nodes){
+    string::size_type found = str.find_first_of(",");
+    while (found!=std::string::npos)
+    {
+        nodes.push_back(str.substr(found-PURSUIT_ID_LEN, PURSUIT_ID_LEN));
+    	found=str.find_first_of(",",found+1);
+    }
+}
+
+string TMIgraph::failedRVReconfig(string & RVNode){
+    RV_leaf * newNode;
+    RV_leaf * parent;
+    RV_leaf * left;
+    RV_leaf * right;
+
+    if (RVNodeMap.find(RVNode) == RVNodeMap.end()){
+        cout<<"no node found, error"<<endl;
+    }else{
+		cout<<RVNode<<endl;
+        newNode = RVNodeMap[RVNode];
+    }
+    
+    vector<string> localNodes = nodeLists[RVNode];
+	vector<string> emptylocalNodes;
+    string newNodeID;
+
+    if(newNode->left_RV!=NULL){
+        left = newNode->left_RV;
+    }
+    if(newNode->right_RV!=NULL){
+        right = newNode->right_RV;
+    }
+
+    if(newNode->parent_ID!=RVNode){
+        parent = RVNodeMap[newNode->parent_ID];
+		parent->removeChild(newNode->self_ID);
+
+		if(newNode->left_RV!=NULL){
+		    parent->replace(left, newNode->self_ID);
+		    createRVFailureMessages(left, emptylocalNodes);
+		    if(newNode->right_RV!=NULL){
+		        master->addNode(right, newNodeID);
+				createRVFailureMessages(right,emptylocalNodes);
+		    }
+		}else if(newNode->right_RV!=NULL){
+			parent->replace(right, newNode->self_ID);
+			createRVFailureMessages(right,emptylocalNodes);
+		}
+
+		vector<string> newParent = nodeLists[parent->self_ID];
+		for (int i =0; i<localNodes.size();i++){
+			newParent.push_back(localNodes.at(i));
+		}
+		nodeLists[parent->self_ID] = newParent;
+
+		createRVFailureMessages(parent, localNodes);
+		delete newNode;			
+    }else{/* TODO if the master fails, the TM is also going to be running on that node. Currently there is no way of restarting the TM if that fails, so in this case, the whole system fails*/
+        if(newNode->left_RV!=NULL){
+  		    master = newNode->left_RV;
+		    if(newNode->right_RV!=NULL){
+		        master->addNode(right, newNodeID);
+				int half_size = localNodes.size()/2;
+				if (localNodes.size()==1){
+					vector<string> newLeft = nodeLists[left->self_ID];
+					newLeft.push_back(localNodes.at(0));
+					nodeLists[left->self_ID] = newLeft;
+					createRVFailureMessages(left, localNodes);
+					createRVFailureMessages(right, emptylocalNodes);
+				}else if (localNodes.size()>1){
+				    vector<string> split_lo(localNodes.begin(), localNodes.begin() + half_size);
+				    vector<string> split_hi(localNodes.begin(), localNodes.begin() + half_size);
+
+					vector<string> newLeft = nodeLists[left->self_ID];
+					for (int i =0; i<split_lo.size();i++){
+						newLeft.push_back(split_lo.at(i));
+					}
+					nodeLists[left->self_ID] = newLeft;
+
+					vector<string> newRight = nodeLists[right->self_ID];
+					for (int i =0; i<split_hi.size();i++){
+						newRight.push_back(split_hi.at(i));
+					}
+					nodeLists[right->self_ID] = newRight;
+
+					createRVFailureMessages(right, split_lo);
+					createRVFailureMessages(left, split_hi);
+				}
+		    }else{
+		        //redistribute to only to left side	
+				vector<string> newLeft = nodeLists[left->self_ID];
+				for (int i =0; i<localNodes.size();i++){
+					newLeft.push_back(localNodes.at(i));
+				}
+				nodeLists[left->self_ID] = newLeft;
+
+				createRVFailureMessages(left, localNodes);
+	   		}
+        }else if (newNode->right_RV!=NULL){			
+		    //give all locally subscribed to only right RV
+	    	master = newNode->right_RV;
+			vector<string> newRight = nodeLists[right->self_ID];
+			for (int i =0; i<localNodes.size();i++){
+				newRight.push_back(localNodes.at(i));
+			}
+			nodeLists[right->self_ID] = newRight;
+		    createRVFailureMessages(right,localNodes);
+		}else{
+		    // total failure, no RV nodes left...
+		    // TODO make a new RV node from previous nodes
+		}
+
+		//TODO update all RV nodes because of a new master node
+
+		delete newNode;
+    }
+	
+    RVNodeMap.erase(RVNode);  
+    return newNodeID;
+}
+void TMIgraph::createRVFailureMessages(RV_leaf * node, vector<string> &localNodes){
+
+    unsigned char response_type = RV_RECONFIGURE_RV;
+    unsigned char numNewRV  = 1;
+    unsigned char lenOfNodeID = node->self_ID.length();
+   
+    int index = sizeof(lenOfNodeID) + lenOfNodeID + sizeof(fid_len) + 8*fid_len;
+    int response_size = sizeof (response_type) + sizeof(numNewRV) +4*(index);
+
+    char *response = (char *) malloc(response_size);  
+
+    Bitvector *blankRVFID = nodeID_iLID[node->self_ID];
+	Bitvector *newparentRVFID;
+	Bitvector *masterRVFID;	
+	Bitvector *newLeftRVFID;
+	Bitvector *newRightRVFID;
+
+
+	if(node->parent_ID== node->self_ID){
+		newparentRVFID = nodeID_iLID[node->self_ID];
+	}else{
+		newparentRVFID= calculateFID(node->self_ID, node->parent_ID);
+	}
+
+	if(master->self_ID == node->self_ID){
+		masterRVFID = nodeID_iLID[node->self_ID];
+	}else{
+		masterRVFID = calculateFID(node->self_ID, master->self_ID);
+	}
+
+	if (node->left_RV!=NULL){
+		newLeftRVFID = calculateFID(node->self_ID, node->left_RV->self_ID);
+	}else{
+		newLeftRVFID = nodeID_iLID[node->self_ID];
+	}
+	
+	if (node->right_RV!=NULL){
+		newRightRVFID = calculateFID(node->self_ID, node->right_RV->self_ID);	
+	}else{
+		newRightRVFID = nodeID_iLID[node->self_ID];
+	}
+    memcpy(response, &response_type, sizeof (response_type));
+    memcpy(response + sizeof (response_type), &numNewRV, sizeof (numNewRV));
+
+    //master RV
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV), &lenOfNodeID , sizeof(lenOfNodeID));
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + sizeof(lenOfNodeID), nodeID.c_str(), nodeID.length());
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + sizeof(lenOfNodeID) + nodeID.length(), &fid_len, sizeof(fid_len));
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + sizeof(lenOfNodeID) + nodeID.length() + sizeof(fid_len), masterRVFID->to_string().c_str(), masterRVFID->to_string().length());
+
+	//parent RV
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 1*(index), &lenOfNodeID , sizeof(lenOfNodeID));
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 1*(index) + sizeof(lenOfNodeID), nodeID.c_str(), nodeID.length());
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 1*(index) + sizeof(lenOfNodeID) + nodeID.length(), &fid_len, sizeof(fid_len));
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 1*(index) + sizeof(lenOfNodeID) + nodeID.length() + sizeof(fid_len), newparentRVFID->to_string().c_str(), newparentRVFID->to_string().length());
+
+	//left RV
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 2*(index), &lenOfNodeID , sizeof(lenOfNodeID));
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 2*(index) + sizeof(lenOfNodeID), nodeID.c_str(), nodeID.length());
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 2*(index) + sizeof(lenOfNodeID) + nodeID.length(), &fid_len, sizeof(fid_len));
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 2*(index) + sizeof(lenOfNodeID) + nodeID.length() + sizeof(fid_len), newLeftRVFID->to_string().c_str(), newLeftRVFID->to_string().length());
+
+	//right RV
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 3*(index), &lenOfNodeID , sizeof(lenOfNodeID));
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 3*(index) + sizeof(lenOfNodeID), nodeID.c_str(), nodeID.length());
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 3*(index) + sizeof(lenOfNodeID) + nodeID.length(), &fid_len, sizeof(fid_len));
+    memcpy(response + sizeof (response_type) + sizeof(numNewRV) + 3*(index) + sizeof(lenOfNodeID) + nodeID.length() + sizeof(fid_len), newRightRVFID->to_string().c_str(), newRightRVFID->to_string().length());
+    whatImReturning.push_back(make_pair(make_pair(node->self_ID, response_size), response));
+
+    
+    for (int i = 0; i < localNodes.size(); i++){
+        string newNodeID = localNodes.at(i);
+		response_type = RV_RECONFIGURE_NODE;
+   		numNewRV  = 1;
+       
+	    int response_size = sizeof (response_type) + sizeof(numNewRV) + sizeof(fid_len) + 8*fid_len  + sizeof(fid_len) + 8*fid_len;
+
+		char *responseNode = (char *) malloc(response_size);  
+	
+		cout<<node->self_ID<<endl;
+		Bitvector *newRVFID = calculateFID(newNodeID, node->self_ID);
+		Bitvector *newTMFID = calculateFID(newNodeID, nodeID);
+		
+		memcpy(responseNode + sizeof (response_type) + sizeof(numNewRV), &fid_len, sizeof(fid_len));
+		memcpy(responseNode + sizeof (response_type) + sizeof(numNewRV) + sizeof(lenOfNodeID), newRVFID->to_string().c_str(), newRVFID->to_string().length());
+		memcpy(responseNode + sizeof (response_type) + sizeof(numNewRV) + sizeof(lenOfNodeID) + sizeof(fid_len) + fid_len, &fid_len, sizeof(fid_len));
+		memcpy(responseNode + sizeof (response_type) + sizeof(numNewRV) + sizeof(lenOfNodeID) +  sizeof(fid_len)+ fid_len + sizeof(fid_len), newTMFID->to_string().c_str(), newTMFID->to_string().length());
+		whatImReturning.push_back(make_pair(make_pair(newNodeID, response_size), response));
+    }
+}
+void TMIgraph::calculateLID(vector<Bitvector> &LIDs, int index) {
+    int bit_position;
+    int number_of_bits = (index / (fid_len * 8)) + 1;
+    Bitvector LID;
+    do {
+        LID = Bitvector(fid_len * 8);
+        for (int i = 0; i < number_of_bits; i++) {
+            /*assign a bit in a random position*/
+	    bit_position = rand() % (fid_len * 8);
+            LID[bit_position] = true;
+        }
+    } while (exists(LIDs, LID));
+    LIDs[index] = LID;
+}
+
+
+RV_leaf::RV_leaf(string &nodeID, string &leftRV, string &rightRV){
+    self_ID = nodeID;
+	parent_ID = nodeID;
+    string left, right;
+    left_RV = NULL;
+    right_RV = NULL;
+    leftNodeNum = 0;
+    rightNodeNum = 0;
+    
+    if (!leftRV.empty()){
+        left_RV = new RV_leaf(leftRV, left, right);
+		left_RV->parent_ID = self_ID;
+        leftNodeNum++;
+    }
+    if (!rightRV.empty()){
+        right_RV = new RV_leaf(rightRV, left, right);  	
+		right_RV->parent_ID = self_ID;
+        rightNodeNum++;
+    }
+}
+void RV_leaf::addChild(RV_leaf * child, int leftRight){
+    if (leftRight == 0){
+        left_RV = child;  
+		child->parent_ID = self_ID;  
+    }else{
+        right_RV = child;
+		child->parent_ID = self_ID;
+    }
+}
+
+void RV_leaf::removeChild(string &child){
+    if (left_RV!=NULL && left_RV->self_ID.compare(child)==0){
+        left_RV = NULL;
+    }else if (right_RV!=NULL && right_RV->self_ID.compare(child)==0){
+        right_RV = NULL;
+    }else{
+		cout<<child + " is not a child of " + self_ID;	
+	}
+}
+
+
+void RV_leaf::addNode(RV_leaf * node, string &nodeID){
+    if (left_RV==NULL){
+        left_RV = node;
+		nodeID = self_ID;
+		node->parent_ID = self_ID;
+  	}else if (right_RV==NULL){
+      	right_RV = node;
+  	    nodeID = self_ID;
+		node->parent_ID = self_ID;
+  	}else{
+  	    if (leftNodeNum<=rightNodeNum){
+		   	left_RV->addNode(node, nodeID);
+		   	leftNodeNum++;
+		}else{
+	    	right_RV->addNode(node, nodeID);
+	    	rightNodeNum++;
+		}
+    }
+}
+
+void RV_leaf::replace(RV_leaf * node, string &replaceNode){
+    if (left_RV->self_ID == replaceNode){
+        left_RV = node;
+		node->parent_ID = self_ID;
+    }else if (right_RV->self_ID == replaceNode){
+        right_RV = node;
+		node->parent_ID = self_ID;
+    }
+}

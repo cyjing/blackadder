@@ -1,0 +1,6 @@
+#!/bin/sh
+#export CLASSPATH=.:$HOME/bin/blackadder/lib
+#java -Djava.library.path=.:$HOME/bin/blackadder/lib $@
+#java $@
+export CLASSPATH=.:/home/mit_psirp/lib
+java -Djava.library.path=.:/home/mit_psirp/lib $@
